@@ -11,30 +11,47 @@ REQUIRED_COLUMNS = [
     "sla_met",
 ]
 
-def generate_sample_data(days: int = 90) -> pd.DataFrame:
-    """Create reproducible synthetic operational data."""
+def generate_sample_data(
+    days: int = 90,
+    end_date: str | pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Create reproducible synthetic operational data.
+
+    A few gentle, deliberate drifts are built in so the demo has something
+    to explain: Sales revenue grows, Customer Support costs creep up, and
+    Operations SLA performance slips in the most recent weeks.
+    """
     rng = np.random.default_rng(42)
-    dates = pd.date_range(
-        end=pd.Timestamp.today().normalize(),
-        periods=days,
-        freq="D",
-    )
+    end = pd.Timestamp(end_date) if end_date else pd.Timestamp.today()
+    dates = pd.date_range(end=end.normalize(), periods=days, freq="D")
 
     rows = []
 
+    # department: (revenue, cost, tickets, revenue drift, cost drift)
+    # Drifts are the total relative change across the whole period.
     departments = {
-        "Sales": (6500, 2600, 24),
-        "Operations": (3200, 1900, 38),
-        "Customer Support": (1800, 1200, 55),
+        "Sales": (6500, 2600, 24, 0.12, 0.03),
+        "Operations": (3200, 1900, 38, 0.00, 0.02),
+        "Customer Support": (1800, 1200, 55, 0.00, 0.15),
     }
 
-    for date in dates:
-        for department, (revenue, cost, tickets) in departments.items():
+    for i, date in enumerate(dates):
+        progress = i / max(1, days - 1)
+
+        for department, spec in departments.items():
+            revenue, cost, tickets, rev_drift, cost_drift = spec
+            revenue *= 1 + rev_drift * progress
+            cost *= 1 + cost_drift * progress
+
             opened = max(1, int(rng.normal(tickets, tickets * 0.15)))
             resolved = min(
                 opened,
                 max(0, int(opened * rng.uniform(0.82, 1.08))),
             )
+
+            sla_low, sla_high = 0.82, 0.98
+            if department == "Operations" and progress > 0.75:
+                sla_low, sla_high = 0.70, 0.88
 
             rows.append({
                 "date": date,
@@ -48,7 +65,7 @@ def generate_sample_data(days: int = 90) -> pd.DataFrame:
                 "tickets_opened": opened,
                 "tickets_resolved": resolved,
                 "sla_met": int(
-                    resolved * rng.uniform(0.82, 0.98)
+                    resolved * rng.uniform(sla_low, sla_high)
                 ),
             })
 
@@ -66,6 +83,7 @@ def validate_data(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     df = df[REQUIRED_COLUMNS].copy()
+    input_rows = len(df)
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
     numeric_columns = [
@@ -103,4 +121,7 @@ def validate_data(df: pd.DataFrame) -> pd.DataFrame:
             "This demo expects tickets_resolved <= tickets_opened."
         )
 
-    return df.sort_values("date").reset_index(drop=True)
+    df = df.sort_values(["date", "department"]).reset_index(drop=True)
+    # Surface how many rows were excluded so the UI can be transparent.
+    df.attrs["dropped_rows"] = input_rows - len(df)
+    return df

@@ -1,9 +1,10 @@
-streamlit
-pandas
-numpy
-plotly
-langchain-core
-langchain-openai
-langgraph
-pydantic
-python-dotenv
+# Versions tested together on Python 3.13 (Windows 11).
+streamlit==1.65.0
+pandas==3.0.6
+numpy==2.5.4
+plotly==7.1.0
+langchain-core==1.6.10
+langchain-openai==1.7.1
+langgraph==1.2.15
+pydantic==2.14.1
+python-dotenv==1.2.4
