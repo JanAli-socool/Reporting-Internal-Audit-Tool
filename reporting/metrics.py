@@ -195,3 +195,47 @@ def daily_trend(df: pd.DataFrame) -> pd.DataFrame:
         * 100
     ).round(2)
     return daily
+
+
+def weekly_comparison(
+    df: pd.DataFrame,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    departments: list[str],
+    column: str,
+) -> pd.DataFrame:
+    """Sum `column` in 7-day buckets for the selected and previous periods.
+
+    Buckets are aligned to each period's first day ("Days 1-7", ...), so
+    bucket N of the current period is directly comparable with bucket N of
+    the previous one. A short final bucket has the same length in both.
+    Returns an empty frame when the previous period is not fully covered.
+    """
+    start = pd.Timestamp(start).normalize()
+    end = pd.Timestamp(end).normalize()
+    prev_start, prev_end = previous_period_bounds(start, end)
+    if df["date"].min().normalize() > prev_start:
+        return pd.DataFrame(columns=["bucket", "period", column])
+
+    length = (end - start).days + 1
+    frames = []
+    for label, (s, e) in {
+        "Selected period": (start, end),
+        "Previous period": (prev_start, prev_end),
+    }.items():
+        records = filter_records(df, s, e, departments)
+        offset = (records["date"].dt.normalize() - s).dt.days // 7
+        totals = records.groupby(offset)[column].sum()
+        frames.append(pd.DataFrame({
+            "bucket_index": totals.index,
+            "period": label,
+            column: totals.values,
+        }))
+
+    result = pd.concat(frames, ignore_index=True)
+    result["bucket"] = result["bucket_index"].map(
+        lambda i: f"Days {i * 7 + 1}–{min(i * 7 + 7, length)}"
+    )
+    return result.sort_values(["bucket_index", "period"])[
+        ["bucket", "period", column]
+    ].reset_index(drop=True)

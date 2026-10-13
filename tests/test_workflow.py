@@ -1,6 +1,6 @@
 import pytest
 
-from reporting.workflow import create_report, find_unverified_figures
+from reporting.workflow import WORKFLOW_STEPS, create_report, find_unverified_figures
 
 from .conftest import GOOD_REPORT, FakeStructuredLLM
 
@@ -117,3 +117,21 @@ def test_ungrounded_figures_are_flagged(text, flagged):
     report = {"executive_summary": text, "key_findings": []}
     result = find_unverified_figures(report, [METRICS, DEPARTMENTS, COMPARISON])
     assert result == [flagged]
+
+
+def test_figure_counts_reported():
+    result = run(FakeStructuredLLM())
+    assert result["figures_checked"] == 6
+    assert result["figures_matched"] == 6
+
+    report = dict(GOOD_REPORT, recommendations=["Cut costs by 12%."])
+    result = run(FakeStructuredLLM(report))
+    assert result["figures_checked"] == 7
+    assert result["figures_matched"] == 6
+
+
+def test_on_step_fires_for_each_node_in_order():
+    steps = []
+    create_report(METRICS, DEPARTMENTS, COMPARISON, llm=FakeStructuredLLM(),
+                  on_step=steps.append)
+    assert steps == [name for name, _ in WORKFLOW_STEPS]

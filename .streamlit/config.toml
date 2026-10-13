@@ -1,0 +1,3 @@
+[theme]
+# Reference palette slot 1. Red and green stay reserved for good/bad deltas.
+primaryColor = "#2a78d6"

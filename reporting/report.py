@@ -27,7 +27,7 @@ def format_change(entry: dict | None, kind: str) -> str:
         return "—"
     change = entry["change"]
     if kind == "pct":
-        return f"{change:+.2f} pp"
+        return f"{change:+.2f} percentage points"
     pct = entry.get("change_pct")
     suffix = f" ({pct:+.2f}%)" if pct is not None else ""
     if kind == "money":

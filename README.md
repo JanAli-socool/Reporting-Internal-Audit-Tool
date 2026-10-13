@@ -23,10 +23,10 @@ are the slow part to verify, and the narrative is the slow part to write.
 
 | Layer | What it does |
 | --- | --- |
-| **Streamlit UI** | CSV upload, period and department filters, KPI tiles with period-over-period deltas, trend and department charts, Markdown/CSV export |
+| **Streamlit UI** | CSV upload, period and department filters, KPI tiles with period-over-period deltas, the AI report directly under the KPIs, then the evidence: weekly current-vs-previous bars, SLA trend, department breakdown |
 | **Data layer (Pandas)** | Schema validation, row-level cleaning with a visible count of excluded rows, business-rule checks |
 | **Analytics layer (Pandas)** | KPIs, department aggregates, and a comparison with the preceding period of equal length |
-| **LangGraph workflow** | `generate_report` → `validate_report`: one structured LLM call, then deterministic checks |
+| **LangGraph workflow** | `prepare_metrics` → `generate_report` → `validate_report`: one structured LLM call between two deterministic steps, streamed to the UI as live progress |
 | **Export** | A Markdown management report that includes the KPI tables, the narrative, and any review flags |
 
 ### Key design decision: Python calculates, the LLM explains
@@ -42,7 +42,13 @@ identify issues, and draft recommendations. Then the validation node:
    forms like `$360.2K` or `0.36 million`. Any figure that isn't in the
    evidence is shown to the reviewer as something to verify.
 
-The report is a draft for a person to review, not a finished deliverable.
+The report card opens with a checklist of these results (for example
+"✅ 6 of 6 figures match the calculated data"), so the reviewer sees what was
+verified before reading the narrative. The report is a draft for a person
+to review, not a finished deliverable.
+
+The dashboard layout follows a recorded design review:
+[`docs/design-council.md`](docs/design-council.md).
 
 ## Architecture
 
@@ -61,6 +67,8 @@ The report is a draft for a person to review, not a finished deliverable.
             ├──────────────────────────────▶ Streamlit dashboard (app.py)
             ▼                                KPI tiles · charts · tables
  ┌──────────────────────┐   reporting/workflow.py (LangGraph)
+ │ prepare_metrics      │   package verified figures into the prompt
+ │        ▼             │
  │ generate_report      │   ChatOpenAI + Pydantic structured output
  │        ▼             │
  │ validate_report      │   structure checks · figure grounding
@@ -174,8 +182,9 @@ The tests need no API key or network access, because the LLM is replaced by a fa
 ├── data/
 │   ├── sample_operations.csv 90 days × 3 departments (synthetic)
 │   └── examples/             Invalid / messy CSVs for testing uploads
-├── tests/                    pytest suite (50 tests)
-├── docs/                     Screenshots, demo script
+├── tests/                    pytest suite (58 tests)
+├── docs/                     Screenshots, demo script, design council record
+├── .streamlit/config.toml    Theme (primary colour)
 ├── requirements.txt          Pinned runtime dependencies
 └── requirements-dev.txt      + pytest
 ```

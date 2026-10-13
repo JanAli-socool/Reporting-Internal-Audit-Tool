@@ -52,7 +52,7 @@ def test_markdown_uses_snapshot_period_and_sections():
 def test_markdown_formats_values_and_changes():
     md = build_report_markdown(snapshot())
     assert "| Revenue | $1,000.00 | -$50.00 (-4.76%) |" in md
-    assert "| Profit margin | 60.00% | +1.25 pp |" in md
+    assert "| Profit margin | 60.00% | +1.25 percentage points |" in md
     assert "| SLA compliance | N/A | — |" in md
     assert "| Sales | $1,000.00 | $400.00 | $600.00 | 60.00% | 90.00% | N/A |" in md
 

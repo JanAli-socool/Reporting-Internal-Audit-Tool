@@ -92,3 +92,30 @@ def test_period_comparison_skipped_without_full_history(sample_df):
     )
     assert not result["available"]
     assert result["changes"] == {}
+
+
+def test_weekly_comparison_buckets(sample_df):
+    from reporting.metrics import weekly_comparison
+
+    depts = ["Sales", "Operations", "Customer Support"]
+    start, end = pd.Timestamp("2026-09-15"), pd.Timestamp("2026-10-14")
+    weekly = weekly_comparison(sample_df, start, end, depts, "revenue")
+
+    assert list(weekly["bucket"].unique()) == [
+        "Days 1–7", "Days 8–14", "Days 15–21", "Days 22–28", "Days 29–30",
+    ]
+    totals = weekly.groupby("period")["revenue"].sum()
+    current = calculate_metrics(
+        sample_df[sample_df["date"].between(start, end)]
+    )["revenue"]
+    assert totals["Selected period"] == pytest.approx(current)
+
+
+def test_weekly_comparison_empty_without_history(sample_df):
+    from reporting.metrics import weekly_comparison
+
+    start = sample_df["date"].min()
+    weekly = weekly_comparison(
+        sample_df, start, start + pd.Timedelta(days=13), ["Sales"], "revenue"
+    )
+    assert weekly.empty

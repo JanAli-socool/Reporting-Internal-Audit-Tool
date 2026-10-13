@@ -24,10 +24,14 @@ def fake_llm(monkeypatch):
 
     def fake_create_report(**kwargs):
         calls.append(kwargs)
+        for node, _ in workflow.WORKFLOW_STEPS:
+            kwargs["on_step"](node)
         return {
             "report": GOOD_REPORT,
             "validation_message": "Report structure validated successfully.",
-            "warnings": [],
+            "warnings": ["Figures not found in the calculated metrics: 12"],
+            "figures_checked": 7,
+            "figures_matched": 6,
         }
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -101,3 +105,33 @@ def test_single_day_period(app):
     app.date_input[0].set_value((end, end)).run()
     assert not app.exception
     assert app.metric[0].value.startswith("$")
+
+
+def test_report_section_comes_before_evidence(app):
+    app.run()
+    headings = [h.value for h in app.subheader]
+    assert headings == ["Overview", "Management report (AI draft)", "Evidence"]
+
+
+def test_percentage_deltas_use_pts(app):
+    app.run()
+    sla = next(m for m in app.metric if m.label == "SLA compliance")
+    assert sla.delta.endswith(" pts")
+    assert any("Compared with the previous 30 days" in c.value for c in app.caption)
+
+
+def test_report_card_shows_trust_checklist_and_steps(app, fake_llm):
+    app.run()
+    app.button[0].click().run()
+    text = " ".join(m.value for m in app.markdown)
+    assert "6 of 7 figures match the calculated data" in text
+    assert "1 to verify" in text
+    for _, label in workflow.WORKFLOW_STEPS:
+        assert f"✓ {label}" in text
+    assert any("12" in w.value for w in app.warning)
+
+
+def test_measure_switch_renders(app):
+    app.run()
+    app.radio[0].set_value("Profit").run()
+    assert not app.exception

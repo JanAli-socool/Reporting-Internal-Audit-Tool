@@ -2,7 +2,7 @@ import json
 import math
 import os
 import re
-from typing import TypedDict
+from typing import Callable, TypedDict
 
 from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
@@ -39,9 +39,20 @@ class ReportState(TypedDict):
     departments: list[dict]
     comparison: dict
     data_source: str
+    prompt: str
     report: dict
     validation_message: str
     warnings: list[str]
+    figures_checked: int
+    figures_matched: int
+
+
+# Node names in execution order, with the label the UI shows for each.
+WORKFLOW_STEPS = [
+    ("prepare_metrics", "Preparing verified metrics"),
+    ("generate_report", "Writing the narrative"),
+    ("validate_report", "Checking structure and figures"),
+]
 
 
 def get_chat_model() -> BaseChatModel:
@@ -158,10 +169,11 @@ def _matches_evidence(
     )
 
 
-def find_unverified_figures(report: dict, evidence: list) -> list[str]:
-    """Return figures in the report text that no supplied value supports.
+def check_figures(report: dict, evidence: list) -> tuple[int, list[str]]:
+    """Count the figures quoted in the report and list unsupported ones.
 
-    This is a heuristic safety net, not proof of correctness: small counts
+    Returns (number of distinct figures checked, unverified figures). This
+    is a heuristic safety net, not proof of correctness: small counts
     (e.g. "three departments") and dates are ignored.
     """
     values = _evidence_values(evidence)
@@ -169,6 +181,7 @@ def find_unverified_figures(report: dict, evidence: list) -> list[str]:
     for key in REPORT_SECTIONS[1:]:
         texts.extend(report.get(key, []))
 
+    checked: set[str] = set()
     unverified = []
     for text in texts:
         # Dates like 2026-07-16 are period labels, not figures.
@@ -183,21 +196,32 @@ def find_unverified_figures(report: dict, evidence: list) -> list[str]:
             if scale == 1 and not frac and number <= 10:
                 continue
 
+            checked.add(raw)
             if not _matches_evidence(number, decimals, scale, values):
                 if raw not in unverified:
                     unverified.append(raw)
-    return unverified
+    return len(checked), unverified
+
+
+def find_unverified_figures(report: dict, evidence: list) -> list[str]:
+    """Return figures in the report text that no supplied value supports."""
+    return check_figures(report, evidence)[1]
 
 
 # --------------------------------------------------
 # Graph nodes
 # --------------------------------------------------
+def prepare_metrics(state: ReportState) -> dict:
+    """Package the verified metrics into the prompt (no LLM involved)."""
+    return {"prompt": build_prompt(state)}
+
+
 def make_generate_node(llm: BaseChatModel | None = None):
     def generate_report(state: ReportState) -> dict:
         """Generate structured narrative from calculated metrics."""
         model = llm or get_chat_model()
         structured_model = model.with_structured_output(ReportOutput)
-        result = structured_model.invoke(build_prompt(state))
+        result = structured_model.invoke(state["prompt"])
         if isinstance(result, BaseModel):
             result = result.model_dump()
         return {"report": result}
@@ -234,7 +258,7 @@ def validate_report(state: ReportState) -> dict:
             f"{len(report['key_findings'])}."
         )
 
-    unverified = find_unverified_figures(
+    checked, unverified = check_figures(
         report,
         [state["metrics"], state["departments"], state.get("comparison")],
     )
@@ -248,16 +272,23 @@ def validate_report(state: ReportState) -> dict:
     if not unverified:
         message += " All quoted figures match the calculated metrics."
 
-    return {"validation_message": message, "warnings": warnings}
+    return {
+        "validation_message": message,
+        "warnings": warnings,
+        "figures_checked": checked,
+        "figures_matched": checked - len(unverified),
+    }
 
 
 def build_reporting_graph(llm: BaseChatModel | None = None):
     graph = StateGraph(ReportState)
 
+    graph.add_node("prepare_metrics", prepare_metrics)
     graph.add_node("generate_report", make_generate_node(llm))
     graph.add_node("validate_report", validate_report)
 
-    graph.add_edge(START, "generate_report")
+    graph.add_edge(START, "prepare_metrics")
+    graph.add_edge("prepare_metrics", "generate_report")
     graph.add_edge("generate_report", "validate_report")
     graph.add_edge("validate_report", END)
 
@@ -270,21 +301,34 @@ def create_report(
     comparison: dict | None = None,
     data_source: str = "",
     llm: BaseChatModel | None = None,
+    on_step: Callable[[str], None] | None = None,
 ) -> dict:
+    """Run the workflow. `on_step(node_name)` fires as each node finishes."""
     workflow = build_reporting_graph(llm)
 
-    result = workflow.invoke({
+    state = {
         "metrics": metrics,
         "departments": departments,
         "comparison": comparison or {},
         "data_source": data_source,
+        "prompt": "",
         "report": {},
         "validation_message": "",
         "warnings": [],
-    })
+        "figures_checked": 0,
+        "figures_matched": 0,
+    }
+
+    for update in workflow.stream(state, stream_mode="updates"):
+        for node, changes in update.items():
+            state.update(changes or {})
+            if on_step:
+                on_step(node)
 
     return {
-        "report": result["report"],
-        "validation_message": result["validation_message"],
-        "warnings": result["warnings"],
+        "report": state["report"],
+        "validation_message": state["validation_message"],
+        "warnings": state["warnings"],
+        "figures_checked": state["figures_checked"],
+        "figures_matched": state["figures_matched"],
     }
